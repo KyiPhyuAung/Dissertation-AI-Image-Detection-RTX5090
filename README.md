@@ -225,7 +225,7 @@ Experiments were conducted on
 - NVIDIA RTX 5090
 - 64 GB RAM
 - AMD Ryzen 9 9900X3D
-- Windows 11
+- Windows 11 Pro
 - CUDA acceleration
 - Mixed Precision (AMP)
 
