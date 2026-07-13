@@ -480,7 +480,11 @@ def evaluate_tiny(model, train_generator: str):
     return results
 
 
-def evaluate_tigas(model, figure_dir: Path):
+def evaluate_tigas(
+    model,
+    figure_dir: Path,
+    evaluation_dir: Path,
+):
     results = []
     all_true, all_pred = [], []
     master_recorder = PredictionRecorder()
@@ -551,7 +555,7 @@ def evaluate_tigas(model, figure_dir: Path):
 
     evaluate_predictions(
     master_recorder,
-    figure_dir.parent,
+    evaluation_dir,
     )
 
     return results, overall
@@ -590,10 +594,31 @@ def run_experiment(
         "-".join(train_generators) if dataset_name == "tigas" else train_generator
     )
     experiment_name = f"{timestamp}_{model_name}_{dataset_name}_train_{source_tag}"
-    experiment_dir = RESULTS_DIR / experiment_name
-    figure_dir = FIGURES_DIR / experiment_name
-    experiment_dir.mkdir(parents=True, exist_ok=False)
-    figure_dir.mkdir(parents=True, exist_ok=False)
+
+    if num_epochs == NUM_EPOCHS and dataset_name == "tigas":
+        official_run_name = f"{timestamp}_{model_name}_{dataset_name}_train_{source_tag}"
+
+        model_results_dir = RESULTS_DIR / "official" / model_name / official_run_name
+        training_dir = model_results_dir / "training"
+        evaluation_dir = model_results_dir / "evaluation"
+
+        figure_dir = (
+            FIGURES_DIR
+            / "official"
+            / model_name
+            / official_run_name
+        )
+    else:
+        model_results_dir = RESULTS_DIR / "experimental" / experiment_name
+        training_dir = model_results_dir / "training"
+        evaluation_dir = model_results_dir / "evaluation"
+        figure_dir = FIGURES_DIR / "experimental" / experiment_name
+
+    training_dir.mkdir(parents=True, exist_ok=True)
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    figure_dir.mkdir(parents=True, exist_ok=True)
+
+    experiment_dir = training_dir
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
     config = {
@@ -645,7 +670,11 @@ def run_experiment(
     print("=" * 78)
 
     if dataset_name == "tigas":
-        results, overall = evaluate_tigas(model, figure_dir)
+        results, overall = evaluate_tigas(
+            model,
+            figure_dir,
+            evaluation_dir,
+        )
         for row in results:
             row.update(
                 {
@@ -661,10 +690,10 @@ def run_experiment(
                 f"{row['evaluation_seconds']:.1f}s"
             )
         pd.DataFrame(results).to_csv(
-            experiment_dir / "per_generator_test_results.csv",
+            evaluation_dir / "per_generator_test_results.csv",
             index=False,
         )
-        with (experiment_dir / "overall_test_metrics.json").open(
+        with (evaluation_dir / "overall_test_metrics.json").open(
             "w", encoding="utf-8"
         ) as file:
             json.dump(overall, file, indent=4)
@@ -700,7 +729,8 @@ def run_experiment(
         "total_experiment_seconds": total_experiment_seconds,
         "total_experiment_minutes": total_experiment_seconds / 60,
         "completed_at": datetime.now().isoformat(timespec="seconds"),
-        "results_directory": str(experiment_dir),
+        "training_directory": str(training_dir),
+        "evaluation_directory": str(evaluation_dir),
         "figures_directory": str(figure_dir),
     }
     with (experiment_dir / "experiment_summary.json").open(
@@ -710,7 +740,8 @@ def run_experiment(
 
     print("=" * 78)
     print(f"Experiment completed in {total_experiment_seconds / 60:.2f} minutes.")
-    print(f"Saved results to: {experiment_dir}")
+    print(f"Saved training results to: {training_dir}")
+    print(f"Saved evaluation results to: {evaluation_dir}")
     print(f"Saved figures to: {figure_dir}")
     print("=" * 78)
 
