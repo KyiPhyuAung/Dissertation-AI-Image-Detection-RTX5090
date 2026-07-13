@@ -44,7 +44,8 @@ class GenImageDataset(Dataset):
             if not class_dir.exists():
                 raise FileNotFoundError(class_dir)
 
-            for image_path in class_dir.rglob("*"):
+            for image_path in sorted(class_dir.rglob("*")):
+
 
                 if (
                     image_path.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp"]
