@@ -259,11 +259,11 @@ Potential future extensions include:
 
 # Author
 
-**Kyi Phyu Aung**
+**Ko Kyi Phyu Aung**
 
 MSc Computing Dissertation
 
-University of Greenwich (NCC Education)
+University Wolverhampton (UK)
 
 ---
 
