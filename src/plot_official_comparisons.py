@@ -176,7 +176,20 @@ def label_bars(ax, suffix=""):
         for bar in container:
             h = bar.get_height()
             labels.append("" if pd.isna(h) else f"{h:.2f}{suffix}")
-        ax.bar_label(container, labels=labels, padding=3, fontsize=9)
+        ax.bar_label(container, labels=labels, padding=4, fontsize=9)
+
+
+def add_headroom(ax, values, percent=False):
+    finite = np.asarray([v for v in values if pd.notna(v)], dtype=float)
+    if finite.size == 0:
+        return
+    if percent:
+        # Keep the honest 0-based percentage scale while leaving room for labels.
+        ax.set_ylim(0, 105)
+        ax.set_yticks(np.arange(0, 101, 20))
+    else:
+        upper = float(finite.max())
+        ax.set_ylim(0, upper * 1.14 if upper > 0 else 1)
 
 
 def single_chart(df, dataset, column, title, ylabel, filename, multiplier=1.0, percent=False):
@@ -190,17 +203,15 @@ def single_chart(df, dataset, column, title, ylabel, filename, multiplier=1.0, p
 
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.bar(part["model_display"], values)
-    ax.set_title(title)
+    ax.set_title(title, pad=16)
     ax.set_xlabel("Model")
     ax.set_ylabel(ylabel)
 
-    if percent:
-        ax.set_ylim(0, 100)
-        label_bars(ax, "%")
-    else:
-        label_bars(ax)
+    add_headroom(ax, values, percent=percent)
+    label_bars(ax, "%" if percent else "")
+    ax.grid(axis="y", alpha=0.20)
 
-    fig.tight_layout()
+    fig.tight_layout(pad=1.5)
     fig.savefig(FIGURE_OUT / filename, dpi=DPI, bbox_inches="tight")
     plt.close(fig)
 
@@ -214,19 +225,17 @@ def grouped_chart(df, column, title, ylabel, filename, multiplier=1.0, percent=F
     )
 
     ax = pivot.plot(kind="bar", figsize=(11, 6), width=0.8)
-    ax.set_title(title)
+    ax.set_title(title, pad=18)
     ax.set_xlabel("Dataset")
     ax.set_ylabel(ylabel)
     ax.tick_params(axis="x", rotation=0)
 
-    if percent:
-        ax.set_ylim(0, 100)
-        label_bars(ax, "%")
-    else:
-        label_bars(ax)
+    add_headroom(ax, pivot.to_numpy().ravel(), percent=percent)
+    label_bars(ax, "%" if percent else "")
+    ax.grid(axis="y", alpha=0.20)
 
-    plt.legend(title="Model")
-    plt.tight_layout()
+    ax.legend(title="Model", loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=3)
+    plt.tight_layout(pad=1.5)
     plt.savefig(FIGURE_OUT / filename, dpi=DPI, bbox_inches="tight")
     plt.close()
 
@@ -237,7 +246,7 @@ def generate_figures(df: pd.DataFrame):
 
         single_chart(
             df, dataset, "accuracy",
-            f"{name} Official Test Accuracy",
+            f"Test Accuracy on {name}",
             "Accuracy (%)",
             f"{dataset}_accuracy_comparison.png",
             multiplier=100.0,
@@ -246,7 +255,7 @@ def generate_figures(df: pd.DataFrame):
 
         single_chart(
             df, dataset, "macro_f1",
-            f"{name} Official Test Macro F1",
+            f"Macro F1-score on {name}",
             "Macro F1 (%)",
             f"{dataset}_macro_f1_comparison.png",
             multiplier=100.0,
@@ -256,7 +265,7 @@ def generate_figures(df: pd.DataFrame):
         if not df[df["dataset"] == dataset]["training_minutes"].isna().all():
             single_chart(
                 df, dataset, "training_minutes",
-                f"{name} Model Training Time",
+                f"Training Time on {name}",
                 "Training Time (minutes)",
                 f"{dataset}_training_time_comparison.png",
             )
@@ -264,14 +273,14 @@ def generate_figures(df: pd.DataFrame):
         if not df[df["dataset"] == dataset]["experiment_minutes"].isna().all():
             single_chart(
                 df, dataset, "experiment_minutes",
-                f"{name} Total Experiment Time",
+                f"Total Experiment Time on {name}",
                 "Total Experiment Time (minutes)",
                 f"{dataset}_experiment_time_comparison.png",
             )
 
     grouped_chart(
         df, "accuracy",
-        "Official Test Accuracy Across Datasets",
+        "Test Accuracy Across the Three Evaluation Datasets",
         "Accuracy (%)",
         "all_datasets_accuracy_comparison.png",
         multiplier=100.0,
@@ -280,7 +289,7 @@ def generate_figures(df: pd.DataFrame):
 
     grouped_chart(
         df, "macro_f1",
-        "Official Test Macro F1 Across Datasets",
+        "Macro F1-score Across the Three Evaluation Datasets",
         "Macro F1 (%)",
         "all_datasets_macro_f1_comparison.png",
         multiplier=100.0,
@@ -289,7 +298,7 @@ def generate_figures(df: pd.DataFrame):
 
     grouped_chart(
         df, "training_minutes",
-        "Model Training Time Across Datasets",
+        "Training Time Across the Three Evaluation Datasets",
         "Training Time (minutes)",
         "all_datasets_training_time_comparison.png",
     )
@@ -308,13 +317,15 @@ def generate_figures(df: pd.DataFrame):
             .reindex(columns=[MODEL_NAMES[m] for m in MODELS])
         )
         ax = pivot.plot(kind="bar", figsize=(11, 6), width=0.8)
-        ax.set_title("Total Experiment Time Across Datasets")
+        ax.set_title("Total Experiment Time Across Available Evaluation Datasets", pad=18)
         ax.set_xlabel("Dataset")
         ax.set_ylabel("Total Experiment Time (minutes)")
         ax.tick_params(axis="x", rotation=0)
+        add_headroom(ax, pivot.to_numpy().ravel(), percent=False)
         label_bars(ax)
-        plt.legend(title="Model")
-        plt.tight_layout()
+        ax.grid(axis="y", alpha=0.20)
+        ax.legend(title="Model", loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=3)
+        plt.tight_layout(pad=1.5)
         plt.savefig(
             FIGURE_OUT / "all_datasets_experiment_time_comparison.png",
             dpi=DPI,
