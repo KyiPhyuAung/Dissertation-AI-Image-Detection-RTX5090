@@ -50,8 +50,7 @@ def analyze_dataset(dataset_name="sample"):
     print(f"\nSaved EDA results to: {results_path}")
 
     # Class balance chart
-    class_counts = df["class"].value_counts()
-    plt.figure(figsize=(6, 4))
+    class_counts = df["class"].value_counts
     class_counts.plot(kind="bar")
     plt.title(f"Class Distribution - {dataset_name}")
     plt.xlabel("Class")
@@ -59,7 +58,8 @@ def analyze_dataset(dataset_name="sample"):
     plt.tight_layout()
     class_chart_path = FIGURES_DIR / f"{dataset_name}_class_distribution.png"
     plt.savefig(class_chart_path)
-    plt.close()
+    plt.close()()
+    plt.figure(figsize=(6, 4))
 
     # Resolution scatter chart
     plt.figure(figsize=(6, 4))

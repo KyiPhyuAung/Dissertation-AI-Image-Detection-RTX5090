@@ -19,7 +19,8 @@ FIGURES_DIR = PROJECT_ROOT / "figures"
 # Keep both datasets available. Update only these paths if folders are moved.
 TINY_GENIMAGE_DIR = DATASET_DIR / "tiny-genimage"
 TIGAS_DIR = DATASET_DIR / "TIGAS"
-
+ART_IMAGES_DIR = DATASET_DIR / "ART_IMAGES"
+CIFAKE_DIR = DATASET_DIR / "CIFAKE"
 # =============================================================================
 # Hardware
 # =============================================================================
@@ -43,6 +44,9 @@ CHANNELS_LAST = DEVICE.type == "cuda"
 IMAGE_SIZE = 384
 NUM_CLASSES = 2
 VALIDATION_FRACTION = 0.10  # Tiny GenImage only; TIGAS uses its official val split.
+ART_TRAIN_FRACTION = 0.80
+ART_VALIDATION_FRACTION = 0.10
+CIFAKE_VALIDATION_FRACTION = 0.10
 
 BATCH_SIZE = 64
 LEARNING_RATE = 1e-4

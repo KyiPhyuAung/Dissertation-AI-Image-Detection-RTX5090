@@ -40,12 +40,15 @@ from src.config import (
     RESULTS_DIR,
     TIGAS_DIR,
     TINY_GENIMAGE_DIR,
+    ART_IMAGES_DIR,
+    CIFAKE_DIR,
     USE_AMP,
     USE_TF32,
     VALIDATION_FRACTION,
 )
 from src.genimage_dataset import GenImageDataset
 from src.mixed_genimage_dataset import MixedGenImageDataset
+from src.binary_folder_dataset import build_art_image_datasets, build_cifake_datasets
 from src.models import build_model
 from src.tigas_dataset import TIGASDataset
 from src.transforms import get_eval_transforms, get_train_transforms
@@ -149,6 +152,34 @@ def build_tigas_training_datasets(train_generators: list[str] | None):
         generators=train_generators,
     )
     return train_dataset, validation_dataset
+
+
+def build_binary_training_datasets(dataset_name: str):
+    if dataset_name == "art_images":
+        train_dataset, validation_dataset, _ = build_art_image_datasets(
+            get_train_transforms(),
+            get_eval_transforms(),
+        )
+        return (
+            train_dataset,
+            validation_dataset,
+            "deterministic class-stratified 80/10/10 split",
+            "all ART_IMAGES samples",
+        )
+
+    if dataset_name == "cifake":
+        train_dataset, validation_dataset, _ = build_cifake_datasets(
+            get_train_transforms(),
+            get_eval_transforms(),
+        )
+        return (
+            train_dataset,
+            validation_dataset,
+            "official CIFAKE train split with deterministic 10% validation holdout",
+            "official CIFAKE training set",
+        )
+
+    raise ValueError(f"Unsupported binary dataset: {dataset_name}")
 
 
 def run_training_epoch(model, dataloader, criterion, optimizer, scaler):
@@ -263,12 +294,21 @@ def train_model(
     train_generator: str | None,
     train_generators: list[str] | None,
     num_epochs: int,
+    checkpoint_dir: Path,
 ):
     if dataset_name == "tigas":
         train_dataset, validation_dataset = build_tigas_training_datasets(train_generators)
         training_description = "all TIGAS generators" if train_generators is None else ", ".join(train_generators)
         validation_description = "official TIGAS validation split"
         checkpoint_tag = "all" if train_generators is None else "-".join(train_generators)
+    elif dataset_name in {"art_images", "cifake"}:
+        (
+            train_dataset,
+            validation_dataset,
+            validation_description,
+            training_description,
+        ) = build_binary_training_datasets(dataset_name)
+        checkpoint_tag = "all"
     else:
         if train_generator is None:
             raise ValueError("--train-generator is required when --dataset tiny")
@@ -288,7 +328,8 @@ def train_model(
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     scaler = create_grad_scaler()
 
-    checkpoint_path = CHECKPOINT_DIR / f"{model_name}_{dataset_name}_{checkpoint_tag}_best.pth"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = checkpoint_dir / f"{model_name}_{dataset_name}_{checkpoint_tag}_best.pth"
     best_val_loss = float("inf")
     best_epoch = 0
     history: list[dict] = []
@@ -561,6 +602,58 @@ def evaluate_tigas(
     return results, overall
 
 
+def evaluate_binary_dataset(
+    model,
+    dataset_name: str,
+    figure_dir: Path,
+    evaluation_dir: Path,
+):
+    if dataset_name == "art_images":
+        _, _, test_dataset = build_art_image_datasets(
+            get_train_transforms(),
+            get_eval_transforms(),
+        )
+        display_name = "ART_IMAGES"
+    elif dataset_name == "cifake":
+        _, _, test_dataset = build_cifake_datasets(
+            get_train_transforms(),
+            get_eval_transforms(),
+        )
+        display_name = "CIFAKE"
+    else:
+        raise ValueError(f"Unsupported binary dataset: {dataset_name}")
+
+    recorder, elapsed = predict_dataset(model, test_dataset)
+    overall = calculate_metrics(
+        recorder.true_labels,
+        recorder.predicted_labels,
+        name=display_name,
+        num_images=len(test_dataset),
+        elapsed=elapsed,
+    )
+
+    evaluate_predictions(recorder, evaluation_dir)
+
+    cm = confusion_matrix(
+        recorder.true_labels,
+        recorder.predicted_labels,
+        labels=[0, 1],
+    )
+    display = ConfusionMatrixDisplay(cm, display_labels=["Real", "Fake"])
+    display.plot(values_format="d")
+    plt.title(f"{display_name} Test Confusion Matrix")
+    plt.tight_layout()
+    plt.savefig(figure_dir / f"{dataset_name}_test_confusion_matrix.png", dpi=300)
+    plt.close()
+
+    with (evaluation_dir / "overall_test_metrics.json").open(
+        "w", encoding="utf-8"
+    ) as file:
+        json.dump(overall, file, indent=4)
+
+    return overall
+
+
 def collect_environment_info():
     info = {
         "python_version": platform.python_version(),
@@ -590,29 +683,32 @@ def run_experiment(
     configure_hardware()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    source_tag = "all" if dataset_name == "tigas" and train_generators is None else (
-        "-".join(train_generators) if dataset_name == "tigas" else train_generator
-    )
+
+    if dataset_name == "tigas":
+        source_tag = "all" if train_generators is None else "-".join(train_generators)
+    elif dataset_name == "tiny":
+        source_tag = train_generator or "unknown"
+    else:
+        source_tag = "all"
+
     experiment_name = f"{timestamp}_{model_name}_{dataset_name}_train_{source_tag}"
 
-    if num_epochs == NUM_EPOCHS and dataset_name == "tigas":
-        official_run_name = f"{timestamp}_{model_name}_{dataset_name}_train_{source_tag}"
+    is_official = (
+        num_epochs == NUM_EPOCHS
+        and dataset_name in {"tigas", "art_images", "cifake"}
+    )
+    run_type = "official" if is_official else "experimental"
 
-        model_results_dir = RESULTS_DIR / "official" / model_name / official_run_name
-        training_dir = model_results_dir / "training"
-        evaluation_dir = model_results_dir / "evaluation"
-
-        figure_dir = (
-            FIGURES_DIR
-            / "official"
-            / model_name
-            / official_run_name
-        )
+    if is_official:
+        model_results_dir = RESULTS_DIR / "official" / dataset_name / model_name / experiment_name
+        figure_dir = FIGURES_DIR / "official" / dataset_name / model_name / experiment_name
     else:
         model_results_dir = RESULTS_DIR / "experimental" / experiment_name
-        training_dir = model_results_dir / "training"
-        evaluation_dir = model_results_dir / "evaluation"
         figure_dir = FIGURES_DIR / "experimental" / experiment_name
+
+    training_dir = model_results_dir / "training"
+    evaluation_dir = model_results_dir / "evaluation"
+    checkpoint_dir = CHECKPOINT_DIR / run_type / dataset_name / experiment_name
 
     training_dir.mkdir(parents=True, exist_ok=True)
     evaluation_dir.mkdir(parents=True, exist_ok=True)
@@ -621,10 +717,17 @@ def run_experiment(
     experiment_dir = training_dir
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
+    dataset_paths = {
+        "tiny": TINY_GENIMAGE_DIR,
+        "tigas": TIGAS_DIR,
+        "art_images": ART_IMAGES_DIR,
+        "cifake": CIFAKE_DIR,
+    }
+
     config = {
         "model": model_name,
         "dataset": dataset_name,
-        "dataset_path": str(TIGAS_DIR if dataset_name == "tigas" else TINY_GENIMAGE_DIR),
+        "dataset_path": str(dataset_paths[dataset_name]),
         "train_generator": train_generator,
         "train_generators": train_generators,
         "device": str(DEVICE),
@@ -639,6 +742,16 @@ def run_experiment(
         "num_epochs": num_epochs,
         "image_size": IMAGE_SIZE,
         "random_seed": RANDOM_SEED,
+        "split_strategy": (
+            "official TIGAS train/val/test"
+            if dataset_name == "tigas"
+            else "ART_IMAGES deterministic class-stratified 80/10/10"
+            if dataset_name == "art_images"
+            else "CIFAKE official test; 10% of official train held out for validation"
+            if dataset_name == "cifake"
+            else "Tiny GenImage deterministic validation holdout"
+        ),
+        "label_mapping": {"REAL": 0, "FAKE": 1},
         "checkpoint_metric": CHECKPOINT_METRIC,
         "use_amp": USE_AMP,
         "use_tf32": USE_TF32,
@@ -658,6 +771,7 @@ def run_experiment(
         train_generator=train_generator,
         train_generators=train_generators,
         num_epochs=num_epochs,
+        checkpoint_dir=checkpoint_dir,
     )
 
     model = build_model(model_name).to(DEVICE)
@@ -704,6 +818,21 @@ def run_experiment(
             f"Macro F1 {overall['macro_f1']:.4f} | "
             f"Fake Recall {overall['fake_recall'] * 100:.2f}%"
         )
+    elif dataset_name in {"art_images", "cifake"}:
+        overall = evaluate_binary_dataset(
+            model,
+            dataset_name,
+            figure_dir,
+            evaluation_dir,
+        )
+        print("-" * 78)
+        print(
+            f"OVERALL {dataset_name.upper()} TEST: "
+            f"Accuracy {overall['accuracy'] * 100:.2f}% | "
+            f"Macro F1 {overall['macro_f1']:.4f} | "
+            f"Fake Recall {overall['fake_recall'] * 100:.2f}% | "
+            f"{overall['evaluation_seconds']:.1f}s"
+        )
     else:
         results = evaluate_tiny(model, train_generator or "unknown")
         for row in results:
@@ -748,14 +877,14 @@ def run_experiment(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run Tiny GenImage or TIGAS experiments."
+        description="Run Tiny GenImage, TIGAS, ART_IMAGES, or CIFAKE experiments."
     )
     parser.add_argument(
         "--model",
         required=True,
         choices=["resnet18", "efficientnet_b0", "convnext_tiny"],
     )
-    parser.add_argument("--dataset", choices=["tiny", "tigas"], default="tiny")
+    parser.add_argument("--dataset", choices=["tiny", "tigas", "art_images", "cifake"], default="tiny")
     parser.add_argument(
         "--train-generator",
         choices=TINY_TEST_GENERATORS + ["mixed"],
@@ -778,10 +907,10 @@ if __name__ == "__main__":
         parser.error("--epochs must be at least 1")
     if args.dataset == "tiny" and args.train_generator is None:
         parser.error("--train-generator is required when --dataset tiny")
-    if args.dataset == "tiny" and args.train_generators is not None:
-        parser.error("--train-generators is only valid with --dataset tigas")
-    if args.dataset == "tigas" and args.train_generator is not None:
+    if args.dataset != "tiny" and args.train_generator is not None:
         parser.error("--train-generator is only valid with --dataset tiny")
+    if args.dataset != "tigas" and args.train_generators is not None:
+        parser.error("--train-generators is only valid with --dataset tigas")
 
     run_experiment(
         model_name=args.model,
